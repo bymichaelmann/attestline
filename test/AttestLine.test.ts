@@ -21,6 +21,7 @@ import {
 import {
   BLOCK_PROVER_PRECOMPILE,
   deployAttestLine,
+  deployLibrary,
   installMockVerifier,
   mineBlocks,
 } from "./helpers";
@@ -265,6 +266,22 @@ describe("AttestLine", () => {
         "MockVerifierRejected"
       );
     });
+
+    it("reverts when the precompile returns false (returnFalse mode)", async () => {
+      const { attestLine, creditActivity, borrower } = await loadFixture(deployTestStack);
+      const fx = buildFixture({
+        sourceContract: creditActivity.target as string,
+        account: borrower.address,
+        amount: 8n * WEI,
+      });
+      // Lax mock that returns false WITHOUT reverting, so the proof is accepted
+      // by the precompile call but AttestLine's own check rejects it.
+      await installMockVerifier({ returnFalse: true });
+      await expect(attestLine.connect(borrower).requestCreditLine(...grantArgs(fx))).to.be.revertedWithCustomError(
+        attestLine,
+        "ProofVerificationFailed"
+      );
+    });
   });
 
   describe("requestCreditLine — decoding & validation", () => {
@@ -361,6 +378,62 @@ describe("AttestLine", () => {
       await expect(attestLine.connect(borrower).requestCreditLine(...grantArgs(fx))).to.be.revertedWithCustomError(
         attestLine,
         "ZeroAmount"
+      );
+    });
+
+    it("rejects a transaction with an unsupported type (txType 5)", async () => {
+      const { attestLine, creditActivity, borrower } = await loadFixture(deployTestStack);
+      const fx = buildFixture({
+        sourceContract: creditActivity.target as string,
+        account: borrower.address,
+        amount: 8n * WEI,
+      });
+      // Lax-mode mock accepts the proof (it never validates tx bytes), so the
+      // malformed transaction reaches the decoder, which rejects txType 5.
+      const encodedTx5 = ethers.AbiCoder.defaultAbiCoder().encode(["uint8", "bytes[]"], [5, []]);
+      await expect(
+        attestLine.connect(borrower).requestCreditLine(...grantArgs(fx, { encodedTx: encodedTx5 }))
+      ).to.be.revertedWithCustomError(attestLine, "UnsupportedTransactionType");
+    });
+
+    it("rejects a CreditActivityRecorded log with the wrong topic count", async () => {
+      const { attestLine, creditActivity, borrower } = await loadFixture(deployTestStack);
+      const amount = 8n * WEI;
+      const fx = buildFixture({
+        sourceContract: creditActivity.target as string,
+        account: borrower.address,
+        amount,
+        logs: [
+          {
+            address: creditActivity.target as string,
+            topics: [CREDIT_ACTIVITY_EVENT_SIGNATURE], // only 1 topic, needs exactly 2
+            data: ethers.AbiCoder.defaultAbiCoder().encode(["uint256"], [amount]),
+          },
+        ],
+      });
+      await expect(attestLine.connect(borrower).requestCreditLine(...grantArgs(fx))).to.be.revertedWithCustomError(
+        attestLine,
+        "InvalidEventTopics"
+      );
+    });
+
+    it("rejects a CreditActivityRecorded log with malformed data", async () => {
+      const { attestLine, creditActivity, borrower } = await loadFixture(deployTestStack);
+      const fx = buildFixture({
+        sourceContract: creditActivity.target as string,
+        account: borrower.address,
+        amount: 8n * WEI,
+        logs: [
+          {
+            address: creditActivity.target as string,
+            topics: [CREDIT_ACTIVITY_EVENT_SIGNATURE, ethers.zeroPadValue(borrower.address, 32)],
+            data: "0x1234", // not a 32-byte word
+          },
+        ],
+      });
+      await expect(attestLine.connect(borrower).requestCreditLine(...grantArgs(fx))).to.be.revertedWithCustomError(
+        attestLine,
+        "InvalidEventData"
       );
     });
   });
@@ -669,6 +742,22 @@ describe("AttestLine", () => {
       await mineBlocks(50);
       expect(await attestLine.accruedInterestOf(borrower.address)).to.equal(afterDefault);
     });
+
+    it("cannot mark an already-defaulted line defaulted again", async () => {
+      const { attestLine, creditActivity, borrower, stranger } = await loadFixture(deployTestStack);
+      const amount = 8n * WEI;
+      await grantLine(attestLine, borrower, creditActivity, amount);
+      await attestLine.connect(borrower).draw(1n * WEI);
+
+      await mineBlocks(TERM_BLOCKS + 2);
+      await expect(attestLine.connect(stranger).markDefaulted(borrower.address))
+        .to.emit(attestLine, "MarkedDefaulted")
+        .withArgs(borrower.address);
+      await expect(attestLine.connect(stranger).markDefaulted(borrower.address)).to.be.revertedWithCustomError(
+        attestLine,
+        "AlreadyDefaulted"
+      );
+    });
   });
 
   describe("ownership & configuration", () => {
@@ -717,6 +806,24 @@ describe("AttestLine", () => {
         fresh,
         "SourceContractNotRegistered"
       );
+    });
+
+    it("rejects the zero address as the line token", async () => {
+      // deployTestStack already set a line token on its AttestLine, so deploy a
+      // fresh one and hit the InvalidLineToken branch before any token is set.
+      const fresh = (await deployAttestLine(TERM_BLOCKS)) as AttestLine;
+      await expect(fresh.setLineToken(ZERO_ADDRESS)).to.be.revertedWithCustomError(fresh, "InvalidLineToken");
+    });
+
+    it("rejects deploying with termBlocks = 0", async () => {
+      const libraries = {
+        EvmV1Decoder: await deployLibrary(
+          "@gluwa/usc-contracts/contracts/decoding/EvmV1Decoder.sol:EvmV1Decoder"
+        ),
+        CreditScore: await deployLibrary("contracts/CreditScore.sol:CreditScore"),
+      };
+      const factory = await hre.ethers.getContractFactory("AttestLine", { libraries });
+      await expect(factory.deploy(0)).to.be.revertedWithCustomError(factory, "InvalidTermBlocks");
     });
   });
 

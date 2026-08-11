@@ -22,6 +22,8 @@ export interface MockConfig {
   enforce?: boolean;
   /** When true, every verification reverts (simulates a failing precompile). */
   fail?: boolean;
+  /** When true, verify/verifyAndEmit return false WITHOUT reverting (AttestLine's ProofVerificationFailed path). */
+  returnFalse?: boolean;
 }
 
 /** Deploy a library by fully-qualified name and return its address. */
@@ -65,7 +67,8 @@ export async function installMockVerifier(config: MockConfig = {}): Promise<Mock
     BigInt(config.height ?? 0),
     config.root ?? ZeroHash,
     Boolean(config.enforce ?? false),
-    Boolean(config.fail ?? false)
+    Boolean(config.fail ?? false),
+    Boolean(config.returnFalse ?? false)
   );
 
   const snapshot = await mock.__configSnapshot();

@@ -21,20 +21,21 @@ import {INativeQueryVerifier} from "../interfaces/INativeQueryVerifier.sol";
  *      - Optionally enforce an expected (chainKey, height) pair and/or fail
  *        every verification, so tests can exercise the reject paths.
  *
- * @dev STORAGE LAYOUT (deliberately simple — five independent 32-byte slots so
+ * @dev STORAGE LAYOUT (deliberately simple — six independent 32-byte slots so
  *      tests can transplant configuration to the precompile address with
  *      `hardhat_setStorageAt` after `hardhat_setCode`):
  *      slot 0: expectedChainKey     slot 1: expectedHeight
  *      slot 2: acceptedRoot         slot 3: enforceExpectation
- *      slot 4: failAll
+ *      slot 4: failAll              slot 5: returnFalse
  */
 contract MockVerifier is INativeQueryVerifier {
-    // Slots 0-4, see layout note above.
+    // Slots 0-5, see layout note above.
     uint256 public expectedChainKey;
     uint256 public expectedHeight;
     bytes32 public acceptedRoot;
     uint256 public enforceExpectation;
     uint256 public failAll;
+    uint256 public returnFalse;
 
     error MockVerifierRejected();
 
@@ -44,24 +45,27 @@ contract MockVerifier is INativeQueryVerifier {
         uint256 height_,
         bytes32 root_,
         bool enforce_,
-        bool fail_
+        bool fail_,
+        bool returnFalse_
     ) external {
         expectedChainKey = chainKey_;
         expectedHeight = height_;
         acceptedRoot = root_;
         enforceExpectation = enforce_ ? 1 : 0;
         failAll = fail_ ? 1 : 0;
+        returnFalse = returnFalse_ ? 1 : 0;
     }
 
-    /// @notice Return the raw storage-slot values (0..4) so tests can transplant
+    /// @notice Return the raw storage-slot values (0..5) so tests can transplant
     ///         the configuration onto the precompile address after hardhat_setCode.
     function __configSnapshot() external view returns (bytes32[] memory values) {
-        values = new bytes32[](5);
+        values = new bytes32[](6);
         values[0] = bytes32(expectedChainKey);
         values[1] = bytes32(expectedHeight);
         values[2] = acceptedRoot;
         values[3] = bytes32(enforceExpectation);
         values[4] = bytes32(failAll);
+        values[5] = bytes32(returnFalse);
     }
 
     // ── INativeQueryVerifier ────────────────────────────────────────────────
@@ -74,7 +78,10 @@ contract MockVerifier is INativeQueryVerifier {
         ContinuityProof calldata
     ) external view returns (bool) {
         _check(chainKey, height, encodedTransaction, merkleProof);
-        return true;
+        // returnFalse mode: return false WITHOUT reverting, so AttestLine's own
+        // ProofVerificationFailed branch is exercised (the real precompile never
+        // returns false, so tests need a mock-only switch to reach that path).
+        return returnFalse == 0;
     }
 
     function verifyAndEmit(
@@ -86,7 +93,7 @@ contract MockVerifier is INativeQueryVerifier {
     ) external returns (bool) {
         _check(chainKey, height, encodedTransaction, merkleProof);
         emit TransactionVerified(chainKey, height, calculateTxIndex(merkleProof));
-        return true;
+        return returnFalse == 0;
     }
 
     function calculateTxIndex(MerkleProof calldata merkleProof) public pure returns (uint64) {
