@@ -12,7 +12,7 @@
  *   5. repay (interest + principal)
  */
 import "dotenv/config";
-import { JsonRpcProvider, Wallet, parseEther } from "ethers";
+import { JsonRpcProvider, MaxUint256, Wallet, parseEther } from "ethers";
 import { loadConfig } from "../src/config";
 import { AttestLineClient } from "../src/client";
 import { CreditActivity__factory } from "../typechain-types";
@@ -84,19 +84,31 @@ async function main() {
   console.log(`      APR:          ${(Number(line.interestRateBps) / 100).toFixed(2)}%`);
   console.log(`      score:        ${score.toString()}`);
 
-  // 4. Draw.
-  console.log("[4/5] Drawing the full credit limit...");
-  const drawReceipt = await client.draw(line.creditLimit, ccWallet);
-  console.log(`      drew ${line.creditLimit.toString()}: tx ${drawReceipt.hash}`);
+  // 4. Draw. Keep 5% of the limit as a buffer so the ALCT balance always
+  //    covers the interest accrued between the draw and the repay.
+  console.log("[4/5] Drawing 95% of the credit limit...");
+  const drawAmount = (line.creditLimit * 95n) / 100n;
+  const drawReceipt = await client.draw(drawAmount, ccWallet);
+  console.log(`      drew ${drawAmount.toString()}: tx ${drawReceipt.hash}`);
   console.log(`      ALCT balance: ${(await client.lineToken.balanceOf(ccWallet.address)).toString()}`);
 
   // 5. Repay (interest + principal). The repay must cover ALL interest accrued
-  //    to its block; one block of slack is added for the tx landing.
+  //    to its block; one block of slack is added for the tx landing. Re-read the
+  //    line after the draw so `used` reflects the drawn principal (it is 0 right
+  //    after the grant).
   console.log("[5/5] Repaying...");
+  const lineAfterDraw = await client.getCreditLine(ccWallet.address);
   const interest = await client.accruedInterestOf(ccWallet.address);
   const interestPerBlock =
-    (line.used * line.interestRateBps) / (2_102_400n * 10_000n);
-  const repayAmount = line.used + interest + interestPerBlock;
+    (lineAfterDraw.used * lineAfterDraw.interestRateBps) / (2_102_400n * 10_000n);
+  const repayAmount = lineAfterDraw.used + interest + interestPerBlock;
+  // AttestLine.repay pulls ALCT from the wallet via transferFrom, so approve
+  // AttestLine to spend the wallet's ALCT before repaying.
+  console.log("      approving AttestLine to spend ALCT...");
+  const approveReceipt = await (
+    await client.lineToken.connect(ccWallet).approve(cfg.attestLineAddress, MaxUint256)
+  ).wait();
+  console.log(`      approved: tx ${approveReceipt!.hash}`);
   const repayReceipt = await client.repay(repayAmount, ccWallet);
   console.log(`      repaid ${repayAmount.toString()}: tx ${repayReceipt.hash}`);
 
