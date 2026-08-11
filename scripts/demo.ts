@@ -84,24 +84,41 @@ async function main() {
   console.log(`      APR:          ${(Number(line.interestRateBps) / 100).toFixed(2)}%`);
   console.log(`      score:        ${score.toString()}`);
 
-  // 4. Draw. Keep 5% of the limit as a buffer so the ALCT balance always
-  //    covers the interest accrued between the draw and the repay.
+  // 4. Draw. Draw 95% of the limit (leaves headroom in the line). True
+  //    invariant: AttestLine.draw sets line.used += amount and mints the same
+  //    amount to the wallet (AttestLine is the sole minter of ALCT and draw is
+  //    the only mint path), so after a draw the ALCT balance EXACTLY equals
+  //    line.used. The undrawn 5% is credit headroom, not tokens — it cannot
+  //    cover interest accrued after the draw. Step 5 therefore repays the full
+  //    ALCT balance, which settles all accrued interest and clears principal to
+  //    documented interest dust.
   console.log("[4/5] Drawing 95% of the credit limit...");
   const drawAmount = (line.creditLimit * 95n) / 100n;
   const drawReceipt = await client.draw(drawAmount, ccWallet);
   console.log(`      drew ${drawAmount.toString()}: tx ${drawReceipt.hash}`);
   console.log(`      ALCT balance: ${(await client.lineToken.balanceOf(ccWallet.address)).toString()}`);
 
-  // 5. Repay (interest + principal). The repay must cover ALL interest accrued
-  //    to its block; one block of slack is added for the tx landing. Re-read the
-  //    line after the draw so `used` reflects the drawn principal (it is 0 right
-  //    after the grant).
+  // 5. Repay (interest + principal). AttestLine.repay settles interest FIRST,
+  //    reverting if amount < accrued interest (RepayDoesNotCoverInterest) or if
+  //    amount - interest > used (Overpay), then pulls ALCT from the wallet via
+  //    transferFrom. After the draw the wallet balance equals line.used, so the
+  //    wallet cannot also cover the interest accrued between the draw and this
+  //    repay in the same tx. Repaying the full ALCT balance pays ALL accrued
+  //    interest and applies the remainder to principal, leaving only documented
+  //    interest dust in `used`. Re-read the line and interest after the draw so
+  //    the figures reflect the drawn principal (used is 0 right after the grant).
   console.log("[5/5] Repaying...");
+  const balance = await client.lineToken.balanceOf(ccWallet.address);
   const lineAfterDraw = await client.getCreditLine(ccWallet.address);
   const interest = await client.accruedInterestOf(ccWallet.address);
-  const interestPerBlock =
-    (lineAfterDraw.used * lineAfterDraw.interestRateBps) / (2_102_400n * 10_000n);
-  const repayAmount = lineAfterDraw.used + interest + interestPerBlock;
+  const owed = lineAfterDraw.used + interest; // full settle amount at read time
+  // Never exceed the wallet balance (no ERC20InsufficientBalance) and never
+  // exceed owed (no Overpay). Interest-first settlement means this amount pays
+  // all accrued interest and applies the remainder to principal.
+  const repayAmount = balance < owed ? balance : owed;
+  console.log(
+    `      balance=${balance.toString()} used=${lineAfterDraw.used.toString()} interest=${interest.toString()} -> repay ${repayAmount.toString()}`
+  );
   // AttestLine.repay pulls ALCT from the wallet via transferFrom, so approve
   // AttestLine to spend the wallet's ALCT before repaying.
   console.log("      approving AttestLine to spend ALCT...");
@@ -118,8 +135,12 @@ async function main() {
   console.log("\n✅ Demo complete.");
   if (after.used > 0n) {
     console.log(
-      `Note: ${after.used.toString()} wei of principal remains because a block of interest\n` +
-        "accrued while the repay tx was in flight — repay again with the fresh figures to settle."
+      `Note: ${after.used.toString()} wei remains in 'used'. This dust equals the interest that\n` +
+        "accrued between the draw tx and the repay tx. AttestLine is the sole minter of ALCT\n" +
+        "and draw is the only mint path, so the wallet holds no external ALCT that could cover\n" +
+        "that interest. Repaying the full ALCT balance settles ALL accrued interest and clears\n" +
+        "principal to this documented interest dust — the expected, spec-compliant outcome\n" +
+        "(used = 0 or documented dust)."
     );
   } else {
     console.log("Credit line fully settled.");
