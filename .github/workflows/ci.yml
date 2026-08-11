@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Compile, test & build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts + generate TypeChain types
+        run: npx hardhat compile
+
+      - name: Run all tests (deterministic, no RPC/secrets)
+        run: npm test
+
+      - name: Typecheck & build the SDK layer
+        run: npm run build
+
+  # Optional: manual testnet deployment. Never runs automatically and only
+  # executes the deploy step when LIVE_RPC is configured (a secret with a value).
+  deploy-testnet:
+    name: Deploy to CC3 testnet (manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: testnet
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Deploy to CC3 testnet
+        if: secrets.LIVE_RPC != ''
+        env:
+          CREDITCOIN_RPC_URL: ${{ secrets.LIVE_RPC }}
+          PRIVATE_KEY: ${{ secrets.LIVE_DEPLOYER_KEY }}
+        run: npx hardhat run scripts/deploy.ts --network cc3

@@ -1,0 +1,66 @@
+{
+  "name": "attestline",
+  "version": "1.0.0",
+  "description": "AttestLine — cross-chain credit lines on Creditcoin, underwritten by attested on-chain activity via the Attestcoin Protocol (Block Prover precompile).",
+  "author": "Michael Mann <michaelmann@disroot.org>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bymichaelmann/attestline.git"
+  },
+  "homepage": "https://github.com/bymichaelmann/attestline",
+  "bugs": {
+    "url": "https://github.com/bymichaelmann/attestline/issues"
+  },
+  "keywords": [
+    "creditcoin",
+    "attestcoin",
+    "usc",
+    "defi",
+    "credit",
+    "cross-chain",
+    "solidity",
+    "ethereum"
+  ],
+  "main": "dist/src/client.js",
+  "types": "dist/src/client.d.ts",
+  "files": [
+    "dist/src",
+    "contracts",
+    "README.md"
+  ],
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "test:contracts": "hardhat test test/CreditScore.test.ts test/AttestLine.test.ts",
+    "test:sdk": "hardhat test test/client.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "deploy": "hardhat run scripts/deploy.ts --network cc3",
+    "demo": "hardhat run scripts/demo.ts --network cc3",
+    "worker": "hardhat run scripts/worker.ts --network cc3"
+  },
+  "dependencies": {
+    "@gluwa/usc-contracts": "0.1.2",
+    "@gluwa/usc-sdk": "^0.18.0",
+    "@openzeppelin/contracts": "^5.0.2",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.15.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^6.0.0",
+    "@types/chai": "^4.3.19",
+    "@types/mocha": "^10.0.8",
+    "@types/node": "^20.14.14",
+    "@types/sinon": "^17.0.3",
+    "chai": "^4.5.0",
+    "hardhat": "^2.22.10",
+    "mocha": "^10.7.3",
+    "sinon": "^18.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
