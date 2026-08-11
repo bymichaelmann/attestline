@@ -32,3 +32,7 @@ pnpm-debug.log*
 
 # Misc
 tmp/
+out/
+target/
+.cache/
+__pycache__/
