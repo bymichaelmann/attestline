@@ -55,8 +55,14 @@ jobs:
         run: npx hardhat compile
 
       - name: Deploy to CC3 testnet
-        if: secrets.LIVE_RPC != ''
         env:
           CREDITCOIN_RPC_URL: ${{ secrets.LIVE_RPC }}
           PRIVATE_KEY: ${{ secrets.LIVE_DEPLOYER_KEY }}
-        run: npx hardhat run scripts/deploy.ts --network cc3
+        # GitHub Actions rejects `secrets` inside `if:`, so the gate lives
+        # in the script: without a configured LIVE_RPC the step no-ops.
+        run: |
+          if [ -z "$CREDITCOIN_RPC_URL" ]; then
+            echo "LIVE_RPC not configured; skipping deploy"
+            exit 0
+          fi
+          npx hardhat run scripts/deploy.ts --network cc3
